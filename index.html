@@ -1,701 +1,250 @@
-import React, { useMemo, useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import {
-  Info,
-  Play,
-  Pause,
-  RotateCcw,
-  HelpCircle,
-  Home,
-  Factory,
-  Landmark,
-  Banknote,
-  Globe2,
-  X,
-} from "lucide-react";
+<!-- /embed-standalone.html  -->
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Ekonomiskt kretslopp – Interaktiv</title>
+    <!-- Tailwind via CDN (ok för demo/embedding) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html,body,#root{height:100%}
+      body{background:#f8fafc}
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
 
-/**
- * file: EconomicCircularFlowSE.tsx
- * default export: <EconomicCircularFlowSE />
- *
- * Förtydligad version:
- * - Cirkulär layout (jämnt fördelade noder på en ring) + tydlig ringbakgrund.
- * - Symboler för alla aktörer (lucide-react) inne i noderna.
- * - Datadriven modell och guidat spel-läge kvar.
- */
+    <script type="module">
+      // Importer från CDN
+      import * as React from "https://esm.sh/react@18?dev";
+      import { createRoot } from "https://esm.sh/react-dom@18/client?dev";
+      import { motion } from "https://esm.sh/framer-motion@11?dev";
+      import {
+        Info, Play, Pause, RotateCcw, HelpCircle,
+        Home, Factory, Landmark, Banknote, Globe2, X
+      } from "https://esm.sh/lucide-react@0.453.0?dev&bundle";
 
-// ---------- Datamodell ----------
+      // === Ekonomiskt kretslopp-komponenten (kortad: samma logik som i canvas) ===
 
-type SectorId = "hushall" | "foretag" | "offentlig" | "bank" | "utland";
+      /** Typdefinitioner (JSDoc istället för TS) */
+      /** @typedef {"hushall"|"foretag"|"offentlig"|"bank"|"utland"} SectorId */
 
-type Sector = {
-  id: SectorId;
-  name: string;
-  description: string;
-  Icon: React.ComponentType<{ size?: number }>;
-};
+      const SECTOR_ORDER = ["hushall","foretag","utland","offentlig","bank"];
 
-type Flow = {
-  id: string;
-  from: SectorId;
-  to: SectorId;
-  label: string;
-  explanation: string;
-};
+      const SECTORS = [
+        { id:"hushall", name:"Hushåll", description:"Privatpersoner ...", Icon:Home },
+        { id:"foretag", name:"Företag", description:"Producerar varor/tjänster ...", Icon:Factory },
+        { id:"offentlig", name:"Offentlig sektor", description:"Staten, regioner, kommuner ...", Icon:Landmark },
+        { id:"bank", name:"Bank", description:"Banker – förmedlar sparande och lån ...", Icon:Banknote },
+        { id:"utland", name:"Utland", description:"Export, import, betalningar med omvärlden.", Icon:Globe2 },
+      ];
 
-// Ordning runt cirkeln (medsols) för att kännas som ett kretslopp
-const SECTOR_ORDER: SectorId[] = [
-  "hushall",
-  "foretag",
-  "utland",
-  "offentlig",
-  "bank",
-];
+      const FLOWS = [
+        { id:"lon", from:"foretag", to:"hushall", label:"Löner", explanation:"Företag betalar lön." },
+        { id:"konsumtion", from:"hushall", to:"foretag", label:"Konsumtion", explanation:"Hushåll köper varor/tjänster." },
+        { id:"skatt_hush", from:"hushall", to:"offentlig", label:"Skatt", explanation:"Inkomstskatter/avgifter." },
+        { id:"skatt_foret", from:"foretag", to:"offentlig", label:"Bolagsskatt/avgifter", explanation:"Skatter & AG." },
+        { id:"transfereringar", from:"offentlig", to:"hushall", label:"Bidrag/transfereringar", explanation:"Bidrag, pensioner m.m." },
+        { id:"offentlig_kop", from:"offentlig", to:"foretag", label:"Offentlig konsumtion/upphandling", explanation:"Köp av varor/tjänster." },
+        { id:"sparande", from:"hushall", to:"bank", label:"Sparande", explanation:"Placeringar i bank/fonder." },
+        { id:"lanelyft_foret", from:"bank", to:"foretag", label:"Lån till investeringar", explanation:"Utlåning till företag." },
+        { id:"lan_hush", from:"bank", to:"hushall", label:"Lån till hushåll", explanation:"Bolån/konsumtionslån." },
+        { id:"ranta_hush", from:"bank", to:"hushall", label:"Ränta/avkastning", explanation:"Avkastning på sparande." },
+        { id:"export", from:"foretag", to:"utland", label:"Export", explanation:"Säljer till utlandet." },
+        { id:"import", from:"utland", to:"foretag", label:"Import", explanation:"Köp av insatsvaror/tjänster." },
+      ];
 
-const SECTORS: Sector[] = [
-  {
-    id: "hushall",
-    name: "Hushåll",
-    description:
-      "Privatpersoner som får inkomster (lön, bidrag) och använder dem till konsumtion, sparande och skatt.",
-    Icon: Home,
-  },
-  {
-    id: "foretag",
-    name: "Företag",
-    description:
-      "Producerar varor/tjänster, betalar löner, gör investeringar och får intäkter från försäljning.",
-    Icon: Factory,
-  },
-  {
-    id: "offentlig",
-    name: "Offentlig sektor",
-    description:
-      "Staten, regioner och kommuner – tar in skatter och levererar välfärdstjänster och transfereringar.",
-    Icon: Landmark,
-  },
-  {
-    id: "bank",
-    name: "Bank",
-    description:
-      "Banker – förmedlar sparande och lån mellan hushåll, företag och offentlig sektor.",
-    Icon: Banknote,
-  },
-  {
-    id: "utland",
-    name: "Utland",
-    description:
-      "Handel och kapitalflöden med omvärlden (export, import och betalningar).",
-    Icon: Globe2,
-  },
-];
+      // Geometri
+      const WIDTH=760, HEIGHT=460, CENTER={x:WIDTH/2,y:HEIGHT/2}, RING_R=160;
+      const NODE_R = { hushall:46, foretag:46, offentlig:52, bank:44, utland:44 };
 
-const FLOWS: Flow[] = [
-  { id: "lon", from: "foretag", to: "hushall", label: "Löner", explanation: "Företag betalar lön för hushållens arbete." },
-  { id: "konsumtion", from: "hushall", to: "foretag", label: "Konsumtion", explanation: "Hushåll köper varor och tjänster." },
-  { id: "skatt_hush", from: "hushall", to: "offentlig", label: "Skatt", explanation: "Hushåll betalar inkomstskatter och avgifter." },
-  { id: "skatt_foret", from: "foretag", to: "offentlig", label: "Bolagsskatt/avgifter", explanation: "Företag betalar skatter och arbetsgivaravgifter." },
-  { id: "transfereringar", from: "offentlig", to: "hushall", label: "Bidrag/transfereringar", explanation: "Offentlig sektor betalar bidrag, pensioner m.m." },
-  { id: "offentlig_kop", from: "offentlig", to: "foretag", label: "Offentlig konsumtion/upphandling", explanation: "Offentlig sektor köper varor/tjänster av företag." },
-  { id: "sparande", from: "hushall", to: "bank", label: "Sparande", explanation: "Hushåll placerar pengar i banker/fonder." },
-  { id: "lanelyft_foret", from: "bank", to: "foretag", label: "Lån till investeringar", explanation: "Banker lånar ut kapital till företag." },
-  { id: "lan_hush", from: "bank", to: "hushall", label: "Lån till hushåll", explanation: "Banker lånar ut till bostäder och konsumtion." },
-  { id: "ranta_hush", from: "bank", to: "hushall", label: "Ränta/avkastning", explanation: "Hushåll får räntor/avkastning på sparande." },
-  { id: "export", from: "foretag", to: "utland", label: "Export", explanation: "Företag säljer till utlandet." },
-  { id: "import", from: "utland", to: "foretag", label: "Import", explanation: "Företag köper insatsvaror/tjänster från utlandet." },
-];
+      const polarToXY = (a, r) => ({ x:CENTER.x + Math.cos(a)*r, y:CENTER.y + Math.sin(a)*r });
+      function sectorPositions(order){
+        const step = (Math.PI*2)/order.length;
+        return order.reduce((acc,id,i)=>{
+          const a = -Math.PI/2 + i*step;
+          acc[id]=polarToXY(a, RING_R); return acc;
+        }, {});
+      }
+      const NODE_POS = sectorPositions(SECTOR_ORDER);
 
-// ---------- Geometri & layout ----------
+      function pathBetween(from,to,curve=0.25){
+        const dx=to.x-from.x, dy=to.y-from.y;
+        const cx1=from.x+dx*curve, cy1=from.y+dy*curve*0.2;
+        const cx2=to.x-dx*curve, cy2=to.y-dy*curve*0.2;
+        return `M ${from.x} ${from.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${to.x} ${to.y}`;
+      }
+      function computeLabel(from,to,label){
+        const mx=(from.x+to.x)/2, my=(from.y+to.y)/2;
+        const dx=to.x-from.x, dy=to.y-from.y;
+        const angle=Math.atan2(dy,dx)*180/Math.PI;
+        const nx=-dy, ny=dx;
+        const outx=mx-CENTER.x, outy=my-CENTER.y;
+        const sign=(nx*outx+ny*outy)>=0 ? 1 : -1;
+        const nlen=Math.hypot(nx,ny)||1, offset=12;
+        const lx=mx+(nx/nlen)*offset*sign, ly=my+(ny/nlen)*offset*sign;
+        const w=Math.max(40, Math.min(180, label.length*7+12)), h=18;
+        return {x:lx,y:ly,angle,w,h};
+      }
 
-const WIDTH = 760;
-const HEIGHT = 460;
-const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
-const RING_R = 160; // ringradie
-const NODE_R: Record<SectorId, number> = {
-  hushall: 46,
-  foretag: 46,
-  offentlig: 52,
-  bank: 44,
-  utland: 44,
-};
+      function useFlows(selected){
+        const outgoing = React.useMemo(()=>FLOWS.filter(f=>!selected||f.from===selected),[selected]);
+        const incoming = React.useMemo(()=>FLOWS.filter(f=>!selected||f.to===selected),[selected]);
+        return { outgoing, incoming };
+      }
+      const getSector = id => SECTORS.find(s=>s.id===id);
 
-function polarToXY(angleRad: number, radius: number) {
-  return {
-    x: CENTER.x + Math.cos(angleRad) * radius,
-    y: CENTER.y + Math.sin(angleRad) * radius,
-  };
-}
+      function App(){
+        const [selected,setSelected]=React.useState();
+        const [showBanner,setShowBanner]=React.useState(false);
+        const [playing,setPlaying]=React.useState(false);
+        const [step,setStep]=React.useState(0);
 
-function sectorPositions(order: SectorId[]) {
-  const step = (Math.PI * 2) / order.length;
-  return order.reduce<Record<SectorId, { x: number; y: number }>>((acc, id, i) => {
-    const a = -Math.PI / 2 + i * step; // start uppåt, medsols
-    acc[id] = polarToXY(a, RING_R);
-    return acc;
-  }, {} as any);
-}
+        const {outgoing,incoming}=useFlows(selected);
+        const steps=FLOWS;
+        const currentFlow=steps[step];
 
-const NODE_POS = sectorPositions(SECTOR_ORDER);
+        React.useEffect(()=>{
+          if(!playing) return;
+          const id=setInterval(()=>{
+            setStep(s=>(s+1)%steps.length);
+            const next=steps[(step+1)%steps.length];
+            setSelected(next.from); setShowBanner(true);
+          },1800);
+          return ()=>clearInterval(id);
+        },[playing,step]);
 
-function pathBetween(
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  curve = 0.25
-): string {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const cx1 = from.x + dx * curve;
-  const cy1 = from.y + dy * curve * 0.2; // lätt böj för läsbarhet
-  const cx2 = to.x - dx * curve;
-  const cy2 = to.y - dy * curve * 0.2;
-  return `M ${from.x} ${from.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${to.x} ${to.y}`;
-}
+        React.useEffect(()=>{ if(selected) setShowBanner(true); },[selected]);
+        React.useEffect(()=>{
+          const onKey=e=>{ if(e.key==="Escape") setShowBanner(false); };
+          window.addEventListener("keydown",onKey);
+          return ()=>window.removeEventListener("keydown",onKey);
+        },[]);
 
-// Beräkna en parallell etikett mitt på linjen, roterad med linjens vinkel
-function computeLabel(
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  label: string
-) {
-  const mx = (from.x + to.x) / 2;
-  const my = (from.y + to.y) / 2;
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI; // grader
-  // Offsätta etiketten vinkelrätt mot linjen och utåt från ringens centrum
-  const nx = -dy; // normal vektor (inte normaliserad)
-  const ny = dx;
-  const outx = mx - CENTER.x;
-  const outy = my - CENTER.y;
-  const dot = nx * outx + ny * outy;
-  const sign = dot >= 0 ? 1 : -1; // välj normal som pekar utåt
-  const nlen = Math.hypot(nx, ny) || 1;
-  const offset = 12; // px
-  const lx = mx + (nx / nlen) * offset * sign;
-  const ly = my + (ny / nlen) * offset * sign;
-  const w = Math.max(40, Math.min(180, label.length * 7 + 12)); // approx bredd
-  const h = 18;
-  return { x: lx, y: ly, angle, w, h };
-}
+        return (
+          React.createElement("div",{className:"w-full h-full p-4 md:p-6 lg:p-8 bg-slate-50"},
+            React.createElement("div",{className:"max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4"},
+              // Vänster
+              React.createElement("div",{className:"bg-white rounded-2xl shadow p-4 md:p-6 relative overflow-visible"},
+                React.createElement("div",{className:"flex items-center justify-between mb-4"},
+                  React.createElement("h1",{className:"text-2xl font-semibold"},"Ekonomiskt kretslopp"),
+                  React.createElement("div",{className:"flex items-center gap-2"},
+                    React.createElement("button",{className:"inline-flex items-center gap-1 rounded-2xl px-3 py-2 border text-sm hover:bg-slate-100", onClick:()=>setPlaying(v=>!v)},
+                      playing?React.createElement(Pause,{className:"w-4 h-4"}):React.createElement(Play,{className:"w-4 h-4"}),
+                      playing?" Pausa":" Spela flödet"
+                    ),
+                    React.createElement("button",{className:"inline-flex items-center gap-1 rounded-2xl px-3 py-2 border text-sm hover:bg-slate-100",
+                      onClick:()=>{ setPlaying(false); setStep(0); setSelected(undefined); }},
+                      React.createElement(RotateCcw,{className:"w-4 h-4"})," Återställ"
+                    ),
+                    React.createElement("div",{className:"ml-2 text-slate-500",title:"Klicka på en ikon"},
+                      React.createElement(HelpCircle,{className:"w-5 h-5"})
+                    )
+                  )
+                ),
 
-// ---------- Hjälpfunktioner ----------
+                // Banner
+                selected && showBanner && React.createElement(motion.div,{
+                  initial:{y:-24,opacity:0}, animate:{y:0,opacity:1}, className:"absolute -top-3 left-4 right-4 z-20"
+                },
+                  React.createElement("div",{className:"bg-slate-900 text-white rounded-2xl shadow-xl ring-1 ring-black/10 px-4 py-3"},
+                    React.createElement("div",{className:"flex items-start gap-3"},
+                      React.createElement("div",{className:"flex-1"},
+                        React.createElement("div",{className:"text-sm uppercase tracking-wide text-slate-300"}, getSector(selected).name),
+                        React.createElement("div",{className:"text-base font-semibold"},"Vart pengarna går & varifrån de kommer"),
+                        React.createElement("div",{className:"mt-2 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm"},
+                          React.createElement("div",null,
+                            React.createElement("div",{className:"text-slate-300"},"Kommer från"),
+                            React.createElement("ul",{className:"mt-1 flex flex-wrap gap-2"},
+                              incoming.length?incoming.map(f=>
+                                React.createElement("li",{key:f.id,className:"px-2 py-1 rounded-full bg-white/10"},
+                                  React.createElement("span",{className:"font-medium"},f.label),
+                                  React.createElement("span",{className:"opacity-80"}," • ", getSector(f.from).name)
+                                )
+                              ):React.createElement("li",{className:"opacity-70"},"— Inga direkta inflöden —")
+                            )
+                          ),
+                          React.createElement("div",null,
+                            React.createElement("div",{className:"text-slate-300"},"Går till"),
+                            React.createElement("ul",{className:"mt-1 flex flex-wrap gap-2"},
+                              outgoing.length?outgoing.map(f=>
+                                React.createElement("li",{key:f.id,className:"px-2 py-1 rounded-full bg-white/10"},
+                                  React.createElement("span",{className:"font-medium"},f.label),
+                                  React.createElement("span",{className:"opacity-80"}," • ", getSector(f.to).name)
+                                )
+                              ):React.createElement("li",{className:"opacity-70"},"— Inga direkta utflöden —")
+                            )
+                          )
+                        )
+                      ),
+                      React.createElement("button",{className:"shrink-0 p-1 -mr-1 rounded-lg hover:bg-white/10", onClick:()=>setShowBanner(false)},
+                        React.createElement(X,{className:"w-5 h-5"})
+                      )
+                    )
+                  )
+                ),
 
-function useFlows(selected?: SectorId) {
-  return useMemo(() => {
-    const outgoing = FLOWS.filter((f) => !selected || f.from === selected);
-    const incoming = FLOWS.filter((f) => !selected || f.to === selected);
-    return { outgoing, incoming };
-  }, [selected]);
-}
+                // SVG
+                React.createElement("div",{className:"relative"},
+                  React.createElement("svg",{viewBox:`0 0 ${WIDTH} ${HEIGHT}`, className:"w-full h-auto"},
+                    React.createElement("circle",{cx:CENTER.x, cy:CENTER.y, r:RING_R, fill:"none", stroke:"#e2e8f0", strokeWidth:8}),
+                    React.createElement("circle",{cx:CENTER.x, cy:CENTER.y, r:RING_R, fill:"none", stroke:"#64748b", strokeDasharray:"6 10", strokeWidth:1.5, opacity:0.6}),
+                    FLOWS.map(f=>{
+                      const from=NODE_POS[f.from], to=NODE_POS[f.to];
+                      const showFlow = selected ? (f.from===selected||f.to===selected) : false;
+                      if(!showFlow) return null;
+                      const isActive = f.from===selected || f.to===selected;
+                      const d=pathBetween(from,to,0.25);
+                      const lp=computeLabel(from,to,f.label);
+                      return React.createElement("g",{key:f.id},
+                        React.createElement("path",{d, fill:"none", stroke:isActive?"#0f172a":"#cbd5e1", strokeWidth:isActive?3:2, opacity:isActive?0.95:0.85,
+                          markerEnd:"url(#arrow)"}),
+                        React.createElement("g",{transform:`translate(${lp.x},${lp.y}) rotate(${lp.angle})`},
+                          React.createElement("rect",{x:-lp.w/2,y:-lp.h/2,width:lp.w,height:lp.h,rx:6,ry:6,fill:"#fff",opacity:0.95}),
+                          React.createElement("text",{textAnchor:"middle",dominantBaseline:"central",fontSize:12, className:isActive?"fill-slate-900":"fill-slate-700"}, f.label)
+                        )
+                      );
+                    }),
+                    React.createElement("defs",null,
+                      React.createElement("marker",{id:"arrow", markerWidth:10, markerHeight:10, refX:10, refY:5, orient:"auto-start-reverse"},
+                        React.createElement("path",{d:"M 0 0 L 10 5 L 0 10 z", fill:"#0f172a"})
+                      )
+                    ),
+                    SECTORS.map(s=>{
+                      const pos=NODE_POS[s.id], r=NODE_R[s.id]; const active=selected===s.id; const Icon=s.Icon;
+                      return React.createElement("g",{key:s.id, className:"cursor-pointer", onClick:()=>{ setSelected(s.id); setShowBanner(true); }},
+                        React.createElement(motion.circle,{cx:pos.x, cy:pos.y, r, fill:active?"#0f172a":"#f1f5f9", stroke:active?"#0f172a":"#cbd5e1", strokeWidth:active?2.5:1.5, whileHover:{scale:1.06}, whileTap:{scale:0.98}}),
+                        React.createElement("g",{transform:`translate(${pos.x-14},${pos.y-22})`},
+                          React.createElement(Icon,{size:28, color:active?"#ffffff":"#0f172a"})
+                        ),
+                        React.createElement("text",{x:pos.x, y:pos.y + r - 10, textAnchor:"middle", className:`text-[12px] font-medium ${active?"fill-slate-900":"fill-slate-700"}`}, s.name)
+                      );
+                    })
+                  )
+                )
+              ),
 
-function getSector(id: SectorId): Sector {
-  const s = SECTORS.find((s) => s.id === id);
-  if (!s) throw new Error("Sektor saknas: " + id);
-  return s;
-}
+              // Höger: enkel textpanel (kortad)
+              React.createElement("div",{className:"bg-white rounded-2xl shadow p-4 md:p-6 h-max"},
+                React.createElement("div",{className:"flex items-center gap-2 mb-3"},
+                  React.createElement(Info,{className:"w-5 h-5 text-slate-700"}),
+                  React.createElement("h2",{className:"text-xl font-semibold"},"Utforskning")
+                ),
+                React.createElement("div",{className:"space-y-3"},
+                  React.createElement("div",null,
+                    React.createElement("div",{className:"text-slate-500 text-sm"},"Vald aktör"),
+                    React.createElement("div",{className:"text-lg font-medium"}, selected?getSector(selected).name:"— klicka på en ikon —")
+                  )
+                )
+              )
+            )
+          )
+        );
+      }
 
-// ---------- UI-Komponent ----------
+      createRoot(document.getElementById("root")).render(React.createElement(App));
+    </script>
+  </body>
+</html>
 
-// --- Frågeapp (quiz) ---
-
-type Question = {
-  id: string;
-  prompt: string;
-  options: string[];
-  correctIndex: number;
-  explain?: string;
-};
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-function sampleOptions(correct: string, pool: string[], k = 3): string[] {
-  const set = new Set<string>();
-  const others = pool.filter((p) => p !== correct);
-  while (set.size < Math.min(k, others.length)) {
-    set.add(others[Math.floor(Math.random() * others.length)]);
-  }
-  return shuffle([correct, ...Array.from(set)]);
-}
-
-function buildQuestions(flows: Flow[], sectors: Sector[], max = 10): Question[] {
-  const sectorNames = sectors.map((s) => s.name);
-  const qs: Question[] = [];
-  for (const f of flows) {
-    const fromName = sectors.find((s) => s.id === f.from)!.name;
-    const toName = sectors.find((s) => s.id === f.to)!.name;
-    // Fråga 1: Varifrån kommer X till Y?
-    const opts1 = sampleOptions(fromName, sectorNames, 3);
-    qs.push({
-      id: `${f.id}-from`,
-      prompt: `Varifrån kommer "${f.label}" till ${toName}?`,
-      options: opts1,
-      correctIndex: opts1.indexOf(fromName),
-      explain: f.explanation,
-    });
-    // Fråga 2: Vart går X från Y?
-    const opts2 = sampleOptions(toName, sectorNames, 3);
-    qs.push({
-      id: `${f.id}-to`,
-      prompt: `Vart går "${f.label}" från ${fromName}?`,
-      options: opts2,
-      correctIndex: opts2.indexOf(toName),
-      explain: f.explanation,
-    });
-  }
-  return shuffle(qs).slice(0, max);
-}
-
-function Quiz({ flows, sectors }: { flows: Flow[]; sectors: Sector[] }) {
-  const [started, setStarted] = useState(false);
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [idx, setIdx] = useState(0);
-  const [picked, setPicked] = useState<number | null>(null);
-  const [showResult, setShowResult] = useState(false);
-  const [score, setScore] = useState(0);
-
-  const current = questions[idx];
-
-  function start() {
-    setQuestions(buildQuestions(flows, sectors, 10));
-    setIdx(0);
-    setPicked(null);
-    setShowResult(false);
-    setScore(0);
-    setStarted(true);
-  }
-
-  function submit() {
-    if (picked == null) return;
-    const correct = picked === current.correctIndex;
-    if (correct) setScore((s) => s + 1);
-    setShowResult(true);
-  }
-
-  function next() {
-    if (idx + 1 >= questions.length) {
-      setStarted(false);
-      return;
-    }
-    setIdx((i) => i + 1);
-    setPicked(null);
-    setShowResult(false);
-  }
-
-  return (
-    <div className="max-w-6xl mx-auto mt-8">
-      <div className="bg-white rounded-2xl shadow p-4 md:p-6">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xl font-semibold">Frågetest: Ekonomiskt kretslopp</h2>
-          {!started && questions.length > 0 && (
-            <div className="text-sm text-slate-500">Senaste resultat: {score}/{questions.length}</div>
-          )}
-        </div>
-
-        {!started && (
-          <div className="space-y-4">
-            <p className="text-slate-600 text-sm">
-              Träna på sambanden: varifrån och vart olika flöden går. 10 slumpade frågor per omgång.
-            </p>
-            <button
-              onClick={start}
-              className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 border hover:bg-slate-50"
-            >
-              Starta test
-            </button>
-          </div>
-        )}
-
-        {started && current && (
-          <div className="space-y-4">
-            <div className="text-sm text-slate-500">Fråga {idx + 1} av {questions.length}</div>
-            <div className="text-lg font-medium">{current.prompt}</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {current.options.map((opt, i) => {
-                const isPicked = picked === i;
-                const isCorrect = current.correctIndex === i;
-                const show = showResult;
-                const base = "rounded-xl border px-3 py-2 text-sm text-left";
-                const cls = !show
-                  ? `${base} hover:bg-slate-50 ${isPicked ? "border-slate-800" : "border-slate-200"}`
-                  : `${base} ${isCorrect ? "bg-green-50 border-green-300" : isPicked ? "bg-red-50 border-red-300" : "bg-white border-slate-200"}`;
-                return (
-                  <button
-                    key={opt}
-                    className={cls}
-                    onClick={() => !show && setPicked(i)}
-                    aria-pressed={isPicked}
-                  >
-                    {opt}
-                  </button>
-                );
-              })}
-            </div>
-
-            {!showResult ? (
-              <div className="flex gap-2">
-                <button
-                  onClick={submit}
-                  disabled={picked == null}
-                  className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 border enabled:hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Svara
-                </button>
-                <button
-                  onClick={() => { setStarted(false); }}
-                  className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 border hover:bg-slate-50"
-                >
-                  Avbryt
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="text-sm">
-                  {picked === current.correctIndex ? (
-                    <span className="text-green-700 font-medium">Rätt!</span>
-                  ) : (
-                    <span className="text-red-700 font-medium">Fel.</span>
-                  )}
-                </div>
-                {current.explain && (
-                  <div className="text-slate-600 text-sm">{current.explain}</div>
-                )}
-                <div className="flex gap-2 pt-1">
-                  <button
-                    onClick={next}
-                    className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 border hover:bg-slate-50"
-                  >
-                    Nästa
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export default function EconomicCircularFlowSE() {
-  const [selected, setSelected] = useState<SectorId | undefined>();
-  const [showBanner, setShowBanner] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [step, setStep] = useState(0);
-
-  const { outgoing, incoming } = useFlows(selected);
-  const steps = FLOWS;
-
-  useEffect(() => {
-    if (!playing) return;
-    const id = setInterval(() => {
-      setStep((s) => (s + 1) % steps.length);
-      const next = steps[(step + 1) % steps.length];
-      setSelected(next.from);
-      setShowBanner(true);
-    }, 1800);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, step]);
-
-  // Visa banner automatiskt vid val
-  useEffect(() => {
-    if (selected) setShowBanner(true);
-  }, [selected]);
-
-  // ESC för att stänga banner
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setShowBanner(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const currentFlow = steps[step];
-
-  return (
-    <div className="w-full h-full p-4 md:p-6 lg:p-8 bg-slate-50">
-      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
-        {/* Vänster: Diagram */}
-        <div className="bg-white rounded-2xl shadow p-4 md:p-6 relative overflow-visible">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-2xl font-semibold">Ekonomiskt kretslopp</h1>
-            <div className="flex items-center gap-2">
-              <button
-                className="inline-flex items-center gap-1 rounded-2xl px-3 py-2 border text-sm hover:bg-slate-100"
-                onClick={() => setPlaying((v) => !v)}
-                aria-label={playing ? "Pausa" : "Spela"}
-              >
-                {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                {playing ? "Pausa" : "Spela flödet"}
-              </button>
-              <button
-                className="inline-flex items-center gap-1 rounded-2xl px-3 py-2 border text-sm hover:bg-slate-100"
-                onClick={() => {
-                  setPlaying(false);
-                  setStep(0);
-                  setSelected(undefined);
-                }}
-                aria-label="Återställ"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Återställ
-              </button>
-              <div className="ml-2 text-slate-500" title="Klicka på en ikon för att se dess flöden">
-                <HelpCircle className="w-5 h-5" />
-              </div>
-            </div>
-          </div>
-
-          {/* Banner över diagrammet */}
-          {selected && showBanner && (
-            <motion.div
-              initial={{ y: -24, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -24, opacity: 0 }}
-              className="absolute -top-3 left-4 right-4 z-20"
-            >
-              <div className="bg-slate-900 text-white rounded-2xl shadow-xl ring-1 ring-black/10 px-4 py-3">
-                <div className="flex items-start gap-3">
-                  <div className="flex-1">
-                    <div className="text-sm uppercase tracking-wide text-slate-300">{getSector(selected).name}</div>
-                    <div className="text-base font-semibold">Vart pengarna går & varifrån de kommer</div>
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <div className="text-slate-300">Kommer från</div>
-                        <ul className="mt-1 flex flex-wrap gap-2">
-                          {incoming.map((f) => (
-                            <li key={f.id} className="px-2 py-1 rounded-full bg-white/10">
-                              <span className="font-medium">{f.label}</span>
-                              <span className="opacity-80"> • {getSector(f.from).name}</span>
-                            </li>
-                          ))}
-                          {incoming.length === 0 && (
-                            <li className="opacity-70">— Inga direkta inflöden —</li>
-                          )}
-                        </ul>
-                      </div>
-                      <div>
-                        <div className="text-slate-300">Går till</div>
-                        <ul className="mt-1 flex flex-wrap gap-2">
-                          {outgoing.map((f) => (
-                            <li key={f.id} className="px-2 py-1 rounded-full bg-white/10">
-                              <span className="font-medium">{f.label}</span>
-                              <span className="opacity-80"> • {getSector(f.to).name}</span>
-                            </li>
-                          ))}
-                          {outgoing.length === 0 && (
-                            <li className="opacity-70">— Inga direkta utflöden —</li>
-                          )}
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    className="shrink-0 p-1 -mr-1 rounded-lg hover:bg-white/10"
-                    aria-label="Stäng banner"
-                    onClick={() => setShowBanner(false)}
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          <div className="relative">
-            <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full h-auto">
-              {/* Bakgrundsring för att tydliggöra kretsloppet */}
-              <circle cx={CENTER.x} cy={CENTER.y} r={RING_R} fill="none" stroke="#e2e8f0" strokeWidth={8} />
-              <circle cx={CENTER.x} cy={CENTER.y} r={RING_R} fill="none" stroke="#64748b" strokeDasharray="6 10" strokeWidth={1.5} opacity={0.6} />
-
-              {/* Pilskaft */}
-              {FLOWS.map((f) => {
-                const from = NODE_POS[f.from];
-                const to = NODE_POS[f.to];
-                const isActive = selected
-                  ? f.from === selected || f.to === selected
-                  : playing
-                  ? f.id === currentFlow.id
-                  : false;
-                const showFlow = selected
-                  ? f.from === selected || f.to === selected
-                  : playing
-                  ? f.id === currentFlow.id
-                  : false;
-                if (!showFlow) return null; // dölj tills en aktör är vald (eller guidat läge)
-                const path = pathBetween(from, to, 0.25);
-                const lp = computeLabel(from, to, f.label);
-                return (
-                  <g key={f.id}>
-                    <path
-                      d={path}
-                      fill="none"
-                      stroke={isActive ? "#0f172a" : "#cbd5e1"}
-                      strokeWidth={isActive ? 3 : 2}
-                      markerEnd="url(#arrow)"
-                      opacity={isActive ? 0.95 : 0.85}
-                    />
-                    {/* Parallell etikett till pilen, med bakgrund för läsbarhet */}
-                    <g transform={`translate(${lp.x}, ${lp.y}) rotate(${lp.angle})`}>
-                      <rect x={-lp.w / 2} y={-lp.h / 2} width={lp.w} height={lp.h} rx={6} ry={6} fill="#ffffff" opacity={0.95} />
-                      <text
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fontSize={12}
-                        className={isActive ? "fill-slate-900" : "fill-slate-700"}
-                      >
-                        {f.label}
-                      </text>
-                    </g>
-                  </g>
-                );
-              })}
-
-              {/* Pilspets-def */}
-              <defs>
-                <marker id="arrow" markerWidth="10" markerHeight="10" refX="10" refY="5" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f172a" />
-                </marker>
-              </defs>
-
-              {/* Noder med symboler */}
-              {SECTORS.map((s) => {
-                const pos = NODE_POS[s.id];
-                const r = NODE_R[s.id];
-                const active = selected === s.id;
-                const Icon = s.Icon;
-                return (
-                  <g key={s.id} className="cursor-pointer" onClick={() => { setSelected(s.id); setShowBanner(true); }}>
-                    <motion.circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r={r}
-                      fill={active ? "#0f172a" : "#f1f5f9"}
-                      stroke={active ? "#0f172a" : "#cbd5e1"}
-                      strokeWidth={active ? 2.5 : 1.5}
-                      whileHover={{ scale: 1.06 }}
-                      whileTap={{ scale: 0.98 }}
-                    />
-                    {/* Ikon */}
-                    <g transform={`translate(${pos.x - 14}, ${pos.y - 22})`}>
-                      <Icon size={28} color={active ? "#ffffff" : "#0f172a"} />
-                    </g>
-                    {/* Etikett */}
-                    <text x={pos.x} y={pos.y + r - 10} textAnchor="middle" className={`text-[12px] font-medium ${active ? "fill-slate-900" : "fill-slate-700"}`}>
-                      {s.name}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-
-          {/* Legend */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-slate-600">
-            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-slate-800 inline-block" /> Aktivt flöde</div>
-            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-slate-300 inline-block" /> Övriga flöden</div>
-            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-slate-200 border border-slate-300 inline-block" /> Ring = kretslopp</div>
-          </div>
-        </div>
-
-        {/* Höger: Panel */}
-        <div className="bg-white rounded-2xl shadow p-4 md:p-6 h-max">
-          <div className="flex items-center gap-2 mb-3">
-            <Info className="w-5 h-5 text-slate-700" />
-            <h2 className="text-xl font-semibold">Utforskning</h2>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <div className="text-slate-500 text-sm">Vald aktör</div>
-              <div className="text-lg font-medium">
-                {selected ? getSector(selected).name : "— klicka på en ikon —"}
-              </div>
-              <div className="text-slate-600 text-sm mt-1 min-h-[2.5rem]">
-                {selected ? getSector(selected).description : "Välj en aktör för att se inkomster och utgifter."}
-              </div>
-            </div>
-
-            {/* Inkomster/Utgifter-listor */}
-            {selected && (
-              <div className="grid grid-cols-1 gap-4">
-                <section>
-                  <h3 className="font-semibold">Pengar kommer från</h3>
-                  <ul className="mt-2 space-y-2">
-                    {incoming.map((f) => (
-                      <li key={f.id} className="border rounded-xl p-3 text-sm hover:bg-slate-50">
-                        <div className="font-medium">{getSector(f.from).name} → {getSector(f.to).name}</div>
-                        <div className="text-slate-600">{f.label} – {f.explanation}</div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h3 className="font-semibold">Pengar går till</h3>
-                  <ul className="mt-2 space-y-2">
-                    {outgoing.map((f) => (
-                      <li key={f.id} className="border rounded-xl p-3 text-sm hover:bg-slate-50">
-                        <div className="font-medium">{getSector(f.from).name} → {getSector(f.to).name}</div>
-                        <div className="text-slate-600">{f.label} – {f.explanation}</div>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              </div>
-            )}
-
-            {/* Guidat läge: aktuell pil */}
-            <div className="border rounded-xl p-3">
-              <div className="text-sm text-slate-500">Guidat flöde</div>
-              <div className="mt-1 text-slate-800">
-                {currentFlow ? (
-                  <div>
-                    <div className="font-medium">{getSector(currentFlow.from).name} → {getSector(currentFlow.to).name}</div>
-                    <div className="text-sm text-slate-600">{currentFlow.label} – {currentFlow.explanation}</div>
-                    <div className="text-xs text-slate-500 mt-1">Steg {step + 1} av {steps.length}</div>
-                  </div>
-                ) : (
-                  <div>Starta med "Spela flödet".</div>
-                )}
-              </div>
-              <div className="flex gap-2 mt-3">
-                <button
-                  className="inline-flex items-center gap-1 rounded-2xl px-3 py-2 border text-sm hover:bg-slate-100"
-                  onClick={() => setPlaying((v) => !v)}
-                >
-                  {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />} {playing ? "Pausa" : "Spela"}
-                </button>
-                <button
-                  className="inline-flex items-center gap-1 rounded-2xl px-3 py-2 border text-sm hover:bg-slate-100"
-                  onClick={() => {
-                    setPlaying(false);
-                    setStep(0);
-                    setSelected(undefined);
-                  }}
-                >
-                  <RotateCcw className="w-4 h-4" /> Återställ
-                </button>
-              </div>
-            </div>
-
-            {/* Pedagogik */}
-            <div className="text-xs text-slate-500 leading-relaxed">
-              Tips: Följ ringen medsols och låt eleverna förklara <em>varför</em> varje pil finns. Vad händer om ett flöde minskar eller ökar?
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Frågetest */}
-      <Quiz flows={FLOWS} sectors={SECTORS} />
-    </div>
-  );
-}
